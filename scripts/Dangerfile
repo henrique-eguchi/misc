@@ -1,0 +1,69 @@
+# Make it more obvious that a PR is a work in progress and shouldn't be merged yet
+warn("PR is classed as Work in Progress") if github.pr_title.include? "[WIP]"
+
+# Ensure that labels have been used on the pr
+fail("Please add labels to this PR") if github.pr_labels.empty?
+
+# Let people say that this isn't worth a CHANGELOG entry in the PR if they choose
+declared_trivial = (github.pr_title + github.pr_body).include?("#trivial")
+
+if !git.modified_files.include?("CHANGELOG.md") && !declared_trivial
+  fail("Please include a CHANGELOG entry. \nYou can find it at [CHANGELOG.md](https://github.com/Company/company-ios/blob/master/CHANGELOG.md).", sticky: false)
+end
+
+# Ensure that all pull requests have an assignee
+warn("This PR does not have any assignees yet, optionally include people who should review.") unless github.pr_json["assignee"]
+
+# Mainly to encourage writing up some reasoning about the PR, rather than
+# just leaving a title
+if github.pr_body.length < 5
+  fail("Please provide a summary in the Pull Request description following the template and [pull request documentation](https://github.com/Company/company-ios/wiki/Pull-requests)")
+end
+
+# Verify if PR title contains Jira task
+tickets = github.pr_title.scan(/([A-Z][A-Z0-9]+-[0-9]+)/)
+if tickets.empty?
+  message('This PR does not include any JIRA tasks in the title. (e.g. [TICKET-1234])')
+else
+  ticket_urls = tickets.map do |ticket|
+    "[#{ticket[0]}](https://project.atlassian.net/browse/#{ticket[0]})"
+  end
+  message("JIRA: " + ticket_urls.join(" "))
+end
+
+# Info.plist file shouldn't change often. Leave warning if it changes.
+warn "Plist changed, don't forget to localize your plist values." if git.modified_files.include? "Info.plist"
+
+# Warn when there is a big PR
+warn("Big PR, size seems relatively large. If Pull Request contains multiple changes, split each into separate PR will helps faster, easier review.") if git.lines_of_code > 500
+
+# If changes are more than 10 lines of code, tests need to be updated too
+has_app_changes = !git.modified_files.grep(/Project/).empty?
+has_test_changes = !git.modified_files.grep(/ProjectTests/).empty?
+
+if has_app_changes && !has_test_changes && git.lines_of_code > 10
+  warn("Tests were not updated. That's OK as long as you're refactoring existing code.", sticky: false)
+end
+
+def runSwiftLint(config)
+  # SwiftLint configuration
+  `sed -i '' 's/#- todo/- todo/g' #{config}`
+  swiftlint.config_file = config
+
+  # Set fail if a warning is found
+  swiftlint.strict = false 
+
+  # Run linter to show summary
+  swiftlint.lint_files(fail_on_error: true)
+end
+
+runSwiftLint('.swiftlint.yml')
+
+# Generate report
+xcov.report(
+  scheme: ENV['BITRISE_SCHEME'],
+  project: ENV['BITRISE_PROJECT_SPM_PATH'],
+  configuration: 'Debug',
+  ignore_file_path: '.xcovignore',
+  xccov_file_direct_path: ENV['BITRISE_XCRESULT_PATH']
+)

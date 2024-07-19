@@ -1,0 +1,157 @@
+default_platform(:ios)
+
+platform :ios do
+
+  desc "Push a new beta (ProjectName Prod) build to TestFlight"
+  lane :betaProd do
+    increment_build_number(xcodeproj: "ProjectName.xcodeproj")
+    build_app(
+      project: "ProjectName.xcodeproj", 
+      scheme: "ProjectName",
+      export_options: {
+        method: "app-store",
+        provisioningProfiles: {
+          "com.company.projectapp" => "project-appstore",
+          "com.company.projectapp.OneSignalNotificationServiceExtension" => "project-appstore-onesignal",
+          "com.company.projectapp.ProjectNameShare" => "project-appstore-shareextension"
+        }
+      }
+    )
+    upload_to_testflight(skip_waiting_for_build_processing: true)
+  end
+
+  desc "Push a new beta (ProjectName Dev) build to TestFlight"
+  lane :betaDev do
+    increment_build_number(xcodeproj: "ProjectName.xcodeproj")
+    build_app(
+      project: "ProjectName.xcodeproj", 
+      scheme: "ProjectNameDev",
+      export_options: {
+        method: "app-store",
+        provisioningProfiles: {
+          "com.company.projectapp" => "project-appstore",
+          "com.company.projectapp.OneSignalNotificationServiceExtension" => "project-appstore-onesignal",
+          "com.company.projectapp.ProjectNameShare" => "project-appstore-shareextension"
+        }
+      }
+    )
+    upload_to_testflight(skip_waiting_for_build_processing: true)
+  end
+
+  desc "Increment Patch version"
+  lane :bumpPatch do
+	increment_build_number(build_number: "1")
+	version = get_version_number(target: "ProjectName")
+	increment_version_number(bump_type: "patch")
+	newVersion = get_version_number(target: "ProjectName")
+	sh "git commit -am \"Version Patch bump: from #{version} to #{newVersion} \""
+	push_to_git_remote
+  end
+
+  desc "Increment Minor version"
+  lane :bumpMinor do
+	increment_build_number(build_number: "1")	
+	version = get_version_number(target: "ProjectName")
+	increment_version_number(bump_type: "minor")
+	newVersion = get_version_number(target: "ProjectName")
+	sh "git commit -am \"Version Minor bump: from #{version} to #{newVersion} \""
+	push_to_git_remote
+  end
+
+  desc "Increment Major version"
+  lane :bumpMajor do
+	increment_build_number(build_number: "1")	
+	version = get_version_number(target: "ProjectName")
+	increment_version_number(bump_type: "major")
+	newVersion = get_version_number(target: "ProjectName")
+	sh "git commit -am \"Version Major bump: from #{version} to #{newVersion} \""
+	push_to_git_remote
+  end
+
+  desc "Increment Build number"
+  lane :bumpBuildVersion do
+	increment_build_number()
+	build_number = get_build_number()
+	sh "git commit -am \"Build version bump: Build #{build_number} \""
+	push_to_git_remote
+  end
+
+  desc "Incrementing version patch, minor, major or build number from input"
+  lane :updateVersion do |options|
+	versionUpdateType = options[:versionUpdateType]
+	puts "update type #{versionUpdateType}"
+	if (versionUpdateType == "patch")
+	  bumpPatch
+	elsif (versionUpdateType == "minor")
+	  bumpMinor
+	elsif (versionUpdateType == "major")
+	  bumpMajor
+	end
+  end
+
+  desc "Set build number value"
+  lane :setBuildNumber do |options|
+	buildNumber = options[:buildNumber]
+	puts "update to build number #{buildNumber}"
+	increment_build_number(build_number: buildNumber)
+  end
+
+  desc "Upload dSYM to Crashlytics"
+  lane :upload_dsym_to_crashlytics do |options|
+  dsymFilePath = options[:dsymFilePath]
+  UPLOAD_SYMBOLS_PATH=`xcodebuild -project ../ProjectName.xcodeproj -showBuildSettings | grep -m 1 "BUILD_DIR" | grep -oEi "\/.*" | sed 's:Build/Products:SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/upload-symbols:' | tr -d '\n'`
+
+  upload_symbols_to_crashlytics(
+    dsym_path: dsymFilePath,
+    binary_path: UPLOAD_SYMBOLS_PATH
+  )
+  end
+
+  desc "Upload dSYM to Instabug"
+  lane :upload_dsym_to_instabug do |options|
+  instabugApiToken = options[:instabugApiToken]
+  dsymFilePath = options[:dsymFilePath]
+  instabug_official(
+    api_token: instabugApiToken,
+    dsym_array_paths: [dsymFilePath]
+  )
+  end
+
+  desc "Bump CHANGELOG"
+  lane :bump_changelog do
+    version = get_version_number(target: "ProjectName")
+    changelog_path = "../CHANGELOG.md"
+    sh("bash", "-c", "chmod +x ../scripts/update_changelog.sh && ../scripts/update_changelog.sh #{version} #{changelog_path}")
+  end
+
+  desc "Get text from section"
+  lane :get_text_from_section do |options|
+    version = options[:version]
+    changelog_path = "../CHANGELOG.md"
+    sh("bash", "-c", "chmod +x ../scripts/get_text_from_section.sh && ../scripts/get_text_from_section.sh #{version} #{changelog_path}")
+  end
+
+  desc "Get merged pull requests since last tag"
+  lane :get_merged_pr_since_last_tag do
+    sh("bash", "-c", "chmod +x ../scripts/get_changelog_merge_commits.sh && ../scripts/get_changelog_merge_commits.sh")
+  end
+
+  desc "Add CHANGELOG entry"
+  lane :add_changelog_entry do |options|
+    entry_text = options[:entry_text]
+    version = options[:version]
+    changelog_path = options[:changelog_path]
+
+    sh("bash", "-c", "chmod +x ../scripts/add_new_changelog_entry.sh && ../scripts/add_new_changelog_entry.sh \"#{changelog_path}\" \"#{entry_text}\" \"#{version}\"")
+  end
+
+  desc "Update CHANGELOG for new release"
+  lane :update_changelog_for_new_release do
+    entry_text = get_merged_pr_since_last_tag()
+    add_changelog_entry(
+      version: get_version_number(target: "ProjectName"),
+      changelog_path: "../CHANGELOG.md",
+      entry_text: entry_text
+    )
+  end
+end
